@@ -25,6 +25,13 @@ function clamp(n: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, n));
 }
 
+// Below this, a "match" is really just noise — show "no strong match"
+// instead of a low-quality result nobody asked for.
+const MIN_SIMILARITY_SCORE = 50;
+// A full-page match means no specific section was isolated, so it's
+// treated as strictly worse evidence than an actual section crop.
+const FULLPAGE_SCORE_PENALTY = 0.75;
+
 export async function runPipeline(
   imageBase64: string,
   mimeType: string,
@@ -65,7 +72,7 @@ export async function runPipeline(
   const settled = await mapWithConcurrency(pages, 3, async (page) => {
     try {
       const site = hostnameOf(page.url);
-      const insp = await inspectPage(page.url);
+      const insp = await inspectPage(page.url, analysis.layout);
       inspected += 1;
       emit({
         type: "progress",
@@ -92,7 +99,7 @@ export async function runPipeline(
       });
 
       emit({ type: "progress", step: "comparing", detail: site });
-      const outcome = await compareCandidates(imageBase64, mimeType, candidateParts);
+      const outcome = await compareCandidates(imageBase64, mimeType, candidateParts, analysis);
 
       const fullPageIndex = candidateParts.length - 1;
       const isFullpage =
@@ -101,14 +108,17 @@ export async function runPipeline(
         ? insp.fullPageScreenshot
         : insp.candidates[outcome.bestCandidateIndex]?.imageDataUrl ?? insp.fullPageScreenshot;
 
+      const rawScore = clamp(Math.round(outcome.similarityScore), 0, 100);
+      const similarityScore = isFullpage ? Math.round(rawScore * FULLPAGE_SCORE_PENALTY) : rawScore;
+
       const result: UIFinderResult = {
         url: page.url,
         siteName: site,
         pageTitle: insp.pageTitle,
         fullPageScreenshot: insp.fullPageScreenshot,
         sectionScreenshot,
-        similarityScore: clamp(Math.round(outcome.similarityScore), 0, 100),
-        confidence: outcome.confidence,
+        similarityScore,
+        confidence: isFullpage && outcome.confidence === "High" ? "Medium" : outcome.confidence,
         explanation: outcome.explanation,
         matchType: isFullpage ? "fullpage" : outcome.matchType,
       };
@@ -126,8 +136,8 @@ export async function runPipeline(
     }
   });
 
-  const results = settled.filter((r): r is UIFinderResult => r !== null);
-  if (results.length === 0) {
+  const compared = settled.filter((r): r is UIFinderResult => r !== null);
+  if (compared.length === 0) {
     const sample = failures.slice(0, 3).join(" | ");
     throw new PipelineError(
       `None of the ${pages.length} candidate webpages could be inspected. ${sample}`,
@@ -136,7 +146,13 @@ export async function runPipeline(
   }
 
   emit({ type: "progress", step: "ranking" });
-  results.sort((a, b) => b.similarityScore - a.similarityScore);
+  const results = compared
+    .filter((r) => r.similarityScore >= MIN_SIMILARITY_SCORE)
+    .sort((a, b) => b.similarityScore - a.similarityScore);
+
+  // Every candidate was genuinely inspected and compared, but none held up
+  // — that's a real, honest outcome, not a failure. Surface it as zero
+  // results rather than dumping the best of a bad lot.
   for (const result of results) {
     emit({ type: "result", result });
   }

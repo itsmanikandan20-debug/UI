@@ -238,52 +238,79 @@ const COMPARE_SCHEMA = {
 };
 
 const COMPARE_PROMPT = `You are comparing a user's submitted UI reference (first image) against
-screenshots of candidate sections cropped from a real webpage, plus one
-full-page screenshot of that same webpage as a fallback.
+screenshots of INDIVIDUAL SECTIONS cropped from a real webpage, plus one
+full-page screenshot of that same webpage included only as a last-resort
+fallback. You are also given the structural analysis that was already
+extracted from the reference — use it as ground truth for what to look for,
+don't re-derive it from scratch.
 
-Judge similarity based PRIMARILY on structure:
-- layout and column count
-- component arrangement (tabs, cards, buttons, containers)
-- spatial relationships (what's left/right/above/below what)
-- image vs text positioning
-- proportions and spacing
-- visual hierarchy
+Score using this checklist, roughly equally weighted unless one factor is
+clearly dominant — go through each one explicitly before deciding:
+1. Column count and arrangement (1 col vs 2 col vs 3+ col, symmetric vs
+   asymmetric)
+2. Tabs: present in both or neither, similar count
+3. Cards: present in both or neither, similar count/arrangement
+4. Buttons/CTAs: presence and rough position (inline vs standalone vs
+   below content)
+5. Image vs text position (left/right/above/below/none)
+6. Spacing density and proportions (tight vs airy, roughly similar
+   element sizing)
+7. Overall visual hierarchy (what's most prominent, reading order)
 
-Colors, fonts, logos, exact copy, and branding should have MUCH LESS
-influence on the score. A rough wireframe should be able to score highly
-against a polished, fully-branded website section if the underlying
-structure matches. Do not penalize a candidate just because it uses
-different colors or content than the reference.
+STRICT RULES:
+- Colors, fonts, logos, exact copy/wording, and branding must have
+  essentially NO influence on the score.
+- The webpage's general TOPIC, industry, or writing style/tone must have
+  ZERO influence — a candidate about a totally different subject can still
+  be a perfect structural match, and a candidate about a similar subject
+  with different structure is NOT a good match. Judge the arrangement of
+  boxes/tabs/columns/images on screen, not what the content is about.
+- Prefer a cropped section candidate over the full-page fallback whenever
+  ANY cropped candidate shares real structural similarity, even if
+  imperfect. Only choose the full-page fallback when literally none of the
+  cropped candidates resemble the reference's structure at all — this
+  should be rare, not a default.
+- Be honest about weak matches. If nothing here genuinely resembles the
+  reference's structure, say so: use a low similarityScore (below 40) and
+  confidence "Low" rather than inflating the score because you found the
+  "least bad" option. A low-confidence, low-score result is a correct and
+  expected answer when nothing matches well.
 
 Candidates are provided in order, each preceded by a label line
 "Candidate N: <description>". The last one is always labeled "Full page
 (fallback)".
 
-Pick the single best-matching candidate. Respond with:
+Respond with:
 - bestCandidateIndex: the 0-based index of the best candidate (index of the
-  first cropped candidate is 0; use the full-page fallback's index only if
-  no cropped candidate is a reasonable structural match)
-- similarityScore: 0-100, how structurally similar the best candidate is
+  first cropped candidate is 0)
+- similarityScore: 0-100, how structurally similar the best candidate is,
+  following the checklist and strict rules above
 - confidence: "High" if you are confident this is the actual matching
   section, "Medium" if it's a plausible but uncertain match, "Low" if it's
-  a weak or purely coincidental match
+  a weak or coincidental match
 - matchType: "exact" if the crop precisely isolates the matching section,
   "likely" if it's a good crop but may include extra surrounding content,
   "broader" if only a larger surrounding crop was reasonably similar,
   "fullpage" if only the full page (not a specific section) resembles the
   reference
 - explanation: one or two sentences, written for a designer, naming the
-  SPECIFIC structural similarities (e.g. "Both use a three-tab navigation
-  with a two-column layout, text on the left and product imagery on the
-  right.")`;
+  SPECIFIC structural similarities or, for a weak match, specifically what
+  doesn't line up (e.g. "Both use a three-tab navigation with a two-column
+  layout, text on the left and product imagery on the right." or "No real
+  match — this section is a single-column pricing table with no tabs or
+  image, unlike the reference's tabbed two-column layout.")`;
 
 export async function compareCandidates(
   userImageBase64: string,
   userMimeType: string,
-  candidates: { label: string; imageBase64: string; mimeType: string }[]
+  candidates: { label: string; imageBase64: string; mimeType: string }[],
+  referenceAnalysis: UIAnalysis
 ): Promise<ComparisonOutcome> {
   const parts: GeminiPart[] = [
     { text: COMPARE_PROMPT },
+    {
+      text: `Reference's extracted structure (ground truth): ${JSON.stringify(referenceAnalysis)}`,
+    },
     { text: "Reference (user's submitted UI):" },
     { inlineData: { mimeType: userMimeType, data: userImageBase64 } },
   ];

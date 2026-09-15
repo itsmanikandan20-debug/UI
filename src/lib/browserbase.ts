@@ -1,6 +1,8 @@
 import { chromium, type Page } from "playwright-core";
 import { requireEnv } from "./env";
-import type { SectionCandidate } from "./types";
+import type { LayoutAnalysis, SectionCandidate } from "./types";
+
+type TargetLayout = Pick<LayoutAnalysis, "hasTabs" | "hasCards" | "hasButtons" | "hasImages" | "columns">;
 
 interface BrowserbaseSession {
   id: string;
@@ -49,24 +51,40 @@ interface RawSection {
   tabLike: number;
   cardLike: number;
   headingCount: number;
+  columnGroups: number;
   tag: string;
+}
+
+interface RawScanResult {
+  sections: RawSection[];
+  documentHeight: number;
 }
 
 // Runs inside the remote page. No closures over outer scope allowed —
 // Playwright serializes this function and executes it in the browser.
-function findCandidateSections(): RawSection[] {
+function findCandidateSections(): RawScanResult {
   const vw = window.innerWidth;
+  const documentHeight = document.documentElement.scrollHeight;
   const seen = new Set<string>();
   const out: RawSection[] = [];
+  // Prefer actual page sections (<section>, direct children of <main>/
+  // <body>) over arbitrary nested divs — those correspond much more
+  // reliably to a real, isolated "section" a designer would recognize,
+  // rather than an inner wrapper or a whole multi-section container.
   const selector =
-    'section, header, footer, main, article, [role="tabpanel"], [role="tablist"], ' +
-    '[class*="tab" i], [class*="feature" i], [class*="hero" i], [class*="card" i], ' +
-    'main > div, main > section > div, body > div > div, body > div > main > div';
+    'section, header, footer, article, [role="tabpanel"], [role="tablist"], ' +
+    'main > div, main > section, body > div > main > div, body > div > div';
 
   document.querySelectorAll(selector).forEach((el) => {
     const r = el.getBoundingClientRect();
     if (r.width < vw * 0.35 || r.width < 280) return;
-    if (r.height < 100 || r.height > 1600) return;
+    if (r.height < 100 || r.height > 1400) return;
+    // A "section" spanning most of the page's total height is really the
+    // whole page's content wrapper, not an isolated section — skip it so
+    // it doesn't crowd out real candidates (the full page is captured
+    // separately as the explicit fallback).
+    if (r.height > documentHeight * 0.6) return;
+
     const top = Math.round(r.top + window.scrollY);
     const left = Math.round(Math.max(0, r.left + window.scrollX));
     const width = Math.round(r.width);
@@ -74,6 +92,14 @@ function findCandidateSections(): RawSection[] {
     const key = `${top},${left},${width},${height}`;
     if (seen.has(key)) return;
     seen.add(key);
+
+    // Rough column count: group this section's direct children into
+    // horizontal bands by their left edge to approximate a layout's
+    // column structure without needing full CSS layout introspection.
+    const children = Array.from(el.children) as HTMLElement[];
+    const lefts = children
+      .map((c) => Math.round(c.getBoundingClientRect().left / 40))
+      .filter((v, i, arr) => arr.indexOf(v) === i);
 
     out.push({
       top,
@@ -85,15 +111,30 @@ function findCandidateSections(): RawSection[] {
       tabLike: el.querySelectorAll('[role="tab"], [class*="tab" i]').length,
       cardLike: el.querySelectorAll('[class*="card" i]').length,
       headingCount: el.querySelectorAll("h1,h2,h3,h4").length,
+      columnGroups: Math.max(1, Math.min(lefts.length, 6)),
       tag: el.tagName.toLowerCase(),
     });
   });
 
-  return out.slice(0, 60);
+  return { sections: out.slice(0, 60), documentHeight };
 }
 
 function structureScore(s: RawSection): number {
   return s.imgCount + s.btnCount * 1.5 + s.tabLike * 2 + s.cardLike * 1.5 + s.headingCount;
+}
+
+/** How well this raw DOM section's detected features match what the
+ * user's submitted UI was analyzed to contain — grounds candidate
+ * selection in the actual target structure, not just generic richness. */
+function featureMatchBonus(s: RawSection, target?: TargetLayout): number {
+  if (!target) return 0;
+  let bonus = 0;
+  if (target.hasTabs) bonus += s.tabLike > 0 ? 4 : -2;
+  if (target.hasCards) bonus += s.cardLike > 0 ? 3 : -1;
+  if (target.hasButtons) bonus += s.btnCount > 0 ? 1.5 : 0;
+  if (target.hasImages) bonus += s.imgCount > 0 ? 1.5 : -1;
+  if (target.columns >= 2) bonus += s.columnGroups >= 2 ? 2 : -1;
+  return bonus;
 }
 
 function iou(a: RawSection, b: RawSection): number {
@@ -107,8 +148,10 @@ function iou(a: RawSection, b: RawSection): number {
   return inter / union;
 }
 
-function pickTopCandidates(raw: RawSection[], max: number): RawSection[] {
-  const sorted = [...raw].sort((a, b) => structureScore(b) - structureScore(a));
+function pickTopCandidates(raw: RawSection[], max: number, target?: TargetLayout): RawSection[] {
+  const sorted = [...raw].sort(
+    (a, b) => structureScore(b) + featureMatchBonus(b, target) - (structureScore(a) + featureMatchBonus(a, target))
+  );
   const picked: RawSection[] = [];
   for (const c of sorted) {
     if (picked.some((p) => iou(p, c) > 0.6)) continue;
@@ -129,7 +172,11 @@ export interface InspectedPage {
  * interesting section candidates, and screenshots the strongest few plus
  * a full-page fallback.
  */
-export async function inspectPage(url: string, timeoutMs = 30000): Promise<InspectedPage> {
+export async function inspectPage(
+  url: string,
+  targetLayout?: TargetLayout,
+  timeoutMs = 30000
+): Promise<InspectedPage> {
   const session = await createSession();
   const connectUrl =
     session.connectUrl ||
@@ -149,8 +196,10 @@ export async function inspectPage(url: string, timeoutMs = 30000): Promise<Inspe
 
     const pageTitle = (await page.title().catch(() => "")) || new URL(url).hostname;
 
-    const raw = await page.evaluate(findCandidateSections).catch(() => [] as RawSection[]);
-    const top = pickTopCandidates(raw, 4);
+    const scan = await page
+      .evaluate(findCandidateSections)
+      .catch(() => ({ sections: [], documentHeight: 0 }) as RawScanResult);
+    const top = pickTopCandidates(scan.sections, 6, targetLayout);
 
     const candidates: SectionCandidate[] = [];
     for (const c of top) {

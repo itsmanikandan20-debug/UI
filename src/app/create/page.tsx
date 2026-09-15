@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { PenTool, UploadCloud, Search, Loader2, AlertTriangle } from "lucide-react";
+import { PenTool, UploadCloud, Search, Loader2, AlertTriangle, SearchX } from "lucide-react";
 import { DrawCanvas, type DrawCanvasHandle } from "@/components/DrawCanvas";
 import { UploadPanel } from "@/components/UploadPanel";
 import { ProgressStepper } from "@/components/ProgressStepper";
@@ -21,6 +21,7 @@ export default function CreatePage() {
   const [analysis, setAnalysis] = useState<UIAnalysis | null>(null);
   const [results, setResults] = useState<UIFinderResult[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [finished, setFinished] = useState(false);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -37,6 +38,8 @@ export default function CreatePage() {
       setResults((prev) => [...prev, event.result]);
     } else if (event.type === "error") {
       setError(event.message);
+    } else if (event.type === "done") {
+      setFinished(true);
     }
   }
 
@@ -46,6 +49,7 @@ export default function CreatePage() {
     setAnalysis(null);
     setCurrentStep(null);
     setDetail(undefined);
+    setFinished(false);
 
     let image: string;
     if (mode === "draw") {
@@ -137,9 +141,23 @@ export default function CreatePage() {
         )}
       </div>
 
-      {(running || currentStep) && !error && results.length === 0 && (
+      {running && !error && (
         <div className="mt-8 max-w-md">
           <ProgressStepper currentStep={currentStep} detail={detail} />
+        </div>
+      )}
+
+      {finished && !error && results.length === 0 && (
+        <div className="mt-10 flex max-w-lg flex-col items-start gap-2 rounded-xl border border-border bg-white p-6 shadow-panel">
+          <span className="flex h-10 w-10 items-center justify-center rounded-full bg-surface-sunken text-ink-muted">
+            <SearchX size={18} />
+          </span>
+          <p className="font-display text-base font-semibold text-ink">No strong match found</p>
+          <p className="text-sm text-ink-soft">
+            We inspected real webpages for this design, but none of their sections were
+            structurally similar enough to call a genuine match. Try adding more distinguishing
+            structure (tabs, columns, a clear image/text split) or submit a different reference.
+          </p>
         </div>
       )}
 
