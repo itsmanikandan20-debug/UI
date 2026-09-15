@@ -61,6 +61,7 @@ export async function runPipeline(
   });
 
   let inspected = 0;
+  const failures: string[] = [];
   const settled = await mapWithConcurrency(pages, 3, async (page) => {
     try {
       const site = hostnameOf(page.url);
@@ -114,10 +115,12 @@ export async function runPipeline(
       return result;
     } catch (err) {
       inspected += 1;
+      const message = errMsg(err);
+      failures.push(`${hostnameOf(page.url)}: ${message}`);
       emit({
         type: "progress",
         step: "inspecting",
-        detail: `Skipped ${hostnameOf(page.url)}: ${errMsg(err)}`,
+        detail: `Skipped ${hostnameOf(page.url)}: ${message}`,
       });
       return null;
     }
@@ -125,8 +128,9 @@ export async function runPipeline(
 
   const results = settled.filter((r): r is UIFinderResult => r !== null);
   if (results.length === 0) {
+    const sample = failures.slice(0, 3).join(" | ");
     throw new PipelineError(
-      "None of the candidate webpages could be inspected successfully. Try again in a moment.",
+      `None of the ${pages.length} candidate webpages could be inspected. ${sample}`,
       "inspecting"
     );
   }
