@@ -198,12 +198,22 @@ the left, product image on the right, and a CTA button below the
 description."
 
 Finally, generate 4 to 6 distinct web-search queries that would help find
-REAL websites containing a similar UI SECTION or design pattern. Queries
-should describe structure (columns, tabs, cards, image/text placement,
-section type), never brand names, colors, or exact copy. Vary the phrasing
-and specificity across queries, e.g. "saas website tabbed feature section
-text left image right", "website two column feature section product
-screenshot", "landing page three tab navigation content switcher".`;
+REAL, LIVE product/company/marketing websites that happen to CONTAIN a
+similar UI section — not pages that are ABOUT UI design.
+
+Critical: never use words like "component", "UI kit", "template",
+"blocks", "design system", "library", "snippet", or a specific framework
+name (shadcn, tailwind, bootstrap, etc). Those words return component
+catalogs and template marketplaces, not real businesses' live websites.
+Instead, phrase each query the way someone would search for an actual
+product or company by the KIND of site and section, e.g. "saas startup
+homepage feature section with tabs", "fintech app landing page two
+column screenshot section", "b2b software website product showcase with
+image right", "ecommerce brand homepage tabbed content switcher". Mix in
+different industries/company types (saas, ecommerce, fintech, healthcare,
+consumer app, agency, marketplace) across the queries so results aren't
+all from the same niche. Still describe structure (columns, tabs, cards,
+image/text placement), never brand names, colors, or exact copy.`;
 
 export async function analyzeUI(imageBase64: string, mimeType: string): Promise<UIAnalysis> {
   return callGemini<UIAnalysis>(

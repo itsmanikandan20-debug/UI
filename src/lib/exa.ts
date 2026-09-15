@@ -7,6 +7,45 @@ interface ExaApiResult {
   score?: number;
 }
 
+// UI component-library catalogs, template marketplaces, design-inspiration
+// galleries, and dev-tool hosts. These rank very highly for generic
+// structural queries ("tabbed feature section") because they're literally
+// pages *about* that pattern — but they're not the real product/marketing
+// websites the tool is supposed to find. Excluded at the Exa query level
+// (not just filtered after) so Exa backfills with genuine results instead
+// of us just shrinking the pool.
+const EXCLUDED_DOMAINS = [
+  "shadcnblocks.com",
+  "shadcn-ui-blocks.com",
+  "shadcn.io",
+  "ui.shadcn.com",
+  "tailwindui.com",
+  "tailwindcss.com",
+  "uiverse.io",
+  "lapa.ninja",
+  "land-book.com",
+  "landbook.com",
+  "dribbble.com",
+  "behance.net",
+  "pinterest.com",
+  "github.com",
+  "npmjs.com",
+  "storybook.js.org",
+  "codepen.io",
+  "codesandbox.io",
+  "figma.com",
+  "awwwards.com",
+  "producthunt.com",
+  "chromewebstore.google.com",
+  "mobbin.com",
+  "htmlrev.com",
+  "onepagelove.com",
+];
+
+function isExcludedDomain(hostname: string): boolean {
+  return EXCLUDED_DOMAINS.some((d) => hostname === d || hostname.endsWith(`.${d}`));
+}
+
 export async function searchExa(query: string, numResults = 8): Promise<ExaSearchResult[]> {
   const apiKey = requireEnv("EXA_API_KEY");
 
@@ -21,6 +60,7 @@ export async function searchExa(query: string, numResults = 8): Promise<ExaSearc
       numResults,
       type: "auto",
       useAutoprompt: true,
+      excludeDomains: EXCLUDED_DOMAINS,
     }),
   });
 
@@ -46,6 +86,7 @@ function isLikelyWebpage(url: string): boolean {
     const u = new URL(url);
     if (!/^https?:$/.test(u.protocol)) return false;
     if (/\.(pdf|zip|png|jpg|jpeg|svg|mp4|mov|docx?|xlsx?)$/i.test(u.pathname)) return false;
+    if (isExcludedDomain(u.hostname.replace(/^www\./, ""))) return false;
     return true;
   } catch {
     return false;
@@ -62,7 +103,7 @@ export async function discoverPages(
   queries: string[],
   maxPages = 8
 ): Promise<ExaSearchResult[]> {
-  const settled = await Promise.allSettled(queries.map((q) => searchExa(q, 6)));
+  const settled = await Promise.allSettled(queries.map((q) => searchExa(q, 10)));
   const all: ExaSearchResult[] = [];
   for (const s of settled) {
     if (s.status === "fulfilled") all.push(...s.value);
@@ -78,9 +119,9 @@ export async function discoverPages(
 
   const ranked = [...byDomain.values()].sort((a, b) => b.score - a.score);
   const topScore = ranked[0]?.score ?? 0;
-  const threshold = topScore * 0.55;
+  const threshold = topScore * 0.45;
   const relevant = ranked.filter((r) => r.score >= threshold);
 
-  const count = Math.max(4, Math.min(maxPages, relevant.length || ranked.length));
+  const count = Math.max(5, Math.min(maxPages, relevant.length || ranked.length));
   return (relevant.length ? relevant : ranked).slice(0, count);
 }
