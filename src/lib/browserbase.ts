@@ -125,15 +125,20 @@ function structureScore(s: RawSection): number {
 
 /** How well this raw DOM section's detected features match what the
  * user's submitted UI was analyzed to contain — grounds candidate
- * selection in the actual target structure, not just generic richness. */
+ * selection in the actual target structure, not just generic richness.
+ * Symmetric: a candidate is rewarded for having what the target has, but
+ * also penalized for having extra structure the target DOESN'T have —
+ * otherwise a busy, feature-rich section (a hero with tabs/buttons/cards)
+ * always out-scores the correct-but-plain section on raw richness alone,
+ * even when the target is something simple like a quote + photo block. */
 function featureMatchBonus(s: RawSection, target?: TargetLayout): number {
   if (!target) return 0;
   let bonus = 0;
-  if (target.hasTabs) bonus += s.tabLike > 0 ? 4 : -2;
-  if (target.hasCards) bonus += s.cardLike > 0 ? 3 : -1;
-  if (target.hasButtons) bonus += s.btnCount > 0 ? 1.5 : 0;
-  if (target.hasImages) bonus += s.imgCount > 0 ? 1.5 : -1;
-  if (target.columns >= 2) bonus += s.columnGroups >= 2 ? 2 : -1;
+  bonus += target.hasTabs ? (s.tabLike > 0 ? 4 : -2) : s.tabLike > 0 ? -2.5 : 0;
+  bonus += target.hasCards ? (s.cardLike > 0 ? 3 : -1) : s.cardLike > 0 ? -1.5 : 0;
+  bonus += target.hasButtons ? (s.btnCount > 0 ? 1.5 : 0) : s.btnCount > 0 ? -1 : 0;
+  bonus += target.hasImages ? (s.imgCount > 0 ? 1.5 : -1) : s.imgCount > 0 ? -0.5 : 0;
+  bonus += target.columns >= 2 ? (s.columnGroups >= 2 ? 2 : -1) : s.columnGroups >= 2 ? -1 : 0;
   return bonus;
 }
 

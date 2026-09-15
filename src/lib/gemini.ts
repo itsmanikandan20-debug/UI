@@ -206,14 +206,24 @@ Critical: never use words like "component", "UI kit", "template",
 name (shadcn, tailwind, bootstrap, etc). Those words return component
 catalogs and template marketplaces, not real businesses' live websites.
 Instead, phrase each query the way someone would search for an actual
-product or company by the KIND of site and section, e.g. "saas startup
-homepage feature section with tabs", "fintech app landing page two
-column screenshot section", "b2b software website product showcase with
-image right", "ecommerce brand homepage tabbed content switcher". Mix in
-different industries/company types (saas, ecommerce, fintech, healthcare,
-consumer app, agency, marketplace) across the queries so results aren't
-all from the same niche. Still describe structure (columns, tabs, cards,
-image/text placement), never brand names, colors, or exact copy.`;
+product or company by the KIND of site and section. Match the query
+style to what the section actually IS — don't default to
+tabs/cards/buttons vocabulary if the reference doesn't have those:
+- Tab/card/feature layouts: "saas startup homepage feature section with
+  tabs", "fintech app landing page two column screenshot section", "b2b
+  software website product showcase with image right"
+- Content-driven blocks (quotes, testimonials, bios, team/founder
+  spotlights) with no tabs or cards: "agency website founder quote
+  testimonial section with photo", "b2b company about page founder story
+  quote right side photo", "startup homepage customer testimonial quote
+  large image"
+- Simple hero/CTA sections: "startup landing page hero heading
+  subheading centered button"
+Mix in different industries/company types (saas, ecommerce, fintech,
+healthcare, consumer app, agency, marketplace) across the queries so
+results aren't all from the same niche. Still describe structure
+(columns, tabs, cards, image/text placement), never brand names, colors,
+or exact copy.`;
 
 export async function analyzeUI(imageBase64: string, mimeType: string): Promise<UIAnalysis> {
   return callGemini<UIAnalysis>(
