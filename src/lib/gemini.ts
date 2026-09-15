@@ -7,19 +7,70 @@ interface GeminiPart {
 }
 
 const RETRYABLE_STATUS = new Set([429, 500, 503]);
-const MAX_ATTEMPTS = 4;
+const MAX_ATTEMPTS_PER_MODEL = 2;
+const MAX_MODEL_CANDIDATES = 5;
+const MODEL_LIST_TTL_MS = 10 * 60 * 1000;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function callGemini<T>(parts: GeminiPart[], schema: object): Promise<T> {
-  const apiKey = requireEnv("GEMINI_API_KEY");
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
+interface GeminiModelInfo {
+  name: string;
+  supportedGenerationMethods?: string[];
+}
+
+// Models Google no longer supports (or that don't take images / structured
+// JSON well) show up as 404s or garbage output — never guess a fixed model
+// name. Ask Google which models this key can actually use, so a retired or
+// overloaded default doesn't strand the whole app again.
+async function fetchAvailableModels(apiKey: string): Promise<string[]> {
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models?pageSize=100&key=${apiKey}`
+  );
+  if (!res.ok) return [];
+  const data = await res.json();
+  const models: GeminiModelInfo[] = data?.models || [];
+  const names = models
+    .filter((m) => (m.supportedGenerationMethods || []).includes("generateContent"))
+    .map((m) => m.name.replace(/^models\//, ""))
+    .filter((n) => !/embedding|tts|image-generation|live|aqa/i.test(n));
+
+  const flash = names.filter((n) => /flash/i.test(n));
+  const pro = names.filter((n) => /pro/i.test(n) && !flash.includes(n));
+  const rest = names.filter((n) => !flash.includes(n) && !pro.includes(n));
+  return [...new Set([...flash, ...pro, ...rest])];
+}
+
+let cachedModels: string[] | null = null;
+let cachedModelsAt = 0;
+
+async function resolveModelCandidates(apiKey: string): Promise<string[]> {
+  const now = Date.now();
+  if (!cachedModels || now - cachedModelsAt > MODEL_LIST_TTL_MS) {
+    cachedModels = await fetchAvailableModels(apiKey).catch(() => []);
+    cachedModelsAt = now;
+  }
+  const discovered = cachedModels.length > 0 ? cachedModels : [GEMINI_MODEL];
+
+  // An explicit GEMINI_MODEL env var is tried first, but we still keep
+  // discovered models queued behind it as a safety net.
+  const override = process.env.GEMINI_MODEL;
+  const ordered = override ? [override, ...discovered.filter((m) => m !== override)] : discovered;
+  return ordered.slice(0, MAX_MODEL_CANDIDATES);
+}
+
+async function callGeminiModel<T>(
+  model: string,
+  apiKey: string,
+  parts: GeminiPart[],
+  schema: object
+): Promise<T> {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
   let lastError = "";
   let res: Response | null = null;
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS_PER_MODEL; attempt++) {
     res = await fetch(url, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -36,8 +87,8 @@ async function callGemini<T>(parts: GeminiPart[], schema: object): Promise<T> {
     if (res.ok) break;
 
     const body = await res.text().catch(() => "");
-    lastError = `Gemini request failed (${res.status}): ${body.slice(0, 400)}`;
-    if (!RETRYABLE_STATUS.has(res.status) || attempt === MAX_ATTEMPTS) {
+    lastError = `${model} failed (${res.status}): ${body.slice(0, 300)}`;
+    if (!RETRYABLE_STATUS.has(res.status) || attempt === MAX_ATTEMPTS_PER_MODEL) {
       throw new Error(lastError);
     }
     // Google's own servers being temporarily overloaded (503) or rate
@@ -47,7 +98,7 @@ async function callGemini<T>(parts: GeminiPart[], schema: object): Promise<T> {
   }
 
   if (!res || !res.ok) {
-    throw new Error(lastError || "Gemini request failed.");
+    throw new Error(lastError || `${model} request failed.`);
   }
 
   const data = await res.json();
@@ -55,9 +106,7 @@ async function callGemini<T>(parts: GeminiPart[], schema: object): Promise<T> {
   if (!text) {
     const blockReason = data?.promptFeedback?.blockReason;
     throw new Error(
-      blockReason
-        ? `Gemini blocked the request: ${blockReason}`
-        : "Gemini returned no content."
+      blockReason ? `Gemini blocked the request: ${blockReason}` : "Gemini returned no content."
     );
   }
 
@@ -66,6 +115,22 @@ async function callGemini<T>(parts: GeminiPart[], schema: object): Promise<T> {
   } catch {
     throw new Error("Gemini returned malformed JSON.");
   }
+}
+
+async function callGemini<T>(parts: GeminiPart[], schema: object): Promise<T> {
+  const apiKey = requireEnv("GEMINI_API_KEY");
+  const candidates = await resolveModelCandidates(apiKey);
+
+  let lastError = "";
+  for (const model of candidates) {
+    try {
+      return await callGeminiModel<T>(model, apiKey, parts, schema);
+    } catch (err) {
+      lastError = err instanceof Error ? err.message : String(err);
+      // Try the next available model instead of failing the whole run.
+    }
+  }
+  throw new Error(lastError || "All Gemini models are currently unavailable.");
 }
 
 const ANALYSIS_SCHEMA = {
