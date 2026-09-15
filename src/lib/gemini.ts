@@ -6,26 +6,48 @@ interface GeminiPart {
   inlineData?: { mimeType: string; data: string };
 }
 
+const RETRYABLE_STATUS = new Set([429, 500, 503]);
+const MAX_ATTEMPTS = 4;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function callGemini<T>(parts: GeminiPart[], schema: object): Promise<T> {
   const apiKey = requireEnv("GEMINI_API_KEY");
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
 
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      contents: [{ role: "user", parts }],
-      generationConfig: {
-        responseMimeType: "application/json",
-        responseSchema: schema,
-        temperature: 0.2,
-      },
-    }),
-  });
+  let lastError = "";
+  let res: Response | null = null;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    res = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ role: "user", parts }],
+        generationConfig: {
+          responseMimeType: "application/json",
+          responseSchema: schema,
+          temperature: 0.2,
+        },
+      }),
+    });
 
-  if (!res.ok) {
+    if (res.ok) break;
+
     const body = await res.text().catch(() => "");
-    throw new Error(`Gemini request failed (${res.status}): ${body.slice(0, 400)}`);
+    lastError = `Gemini request failed (${res.status}): ${body.slice(0, 400)}`;
+    if (!RETRYABLE_STATUS.has(res.status) || attempt === MAX_ATTEMPTS) {
+      throw new Error(lastError);
+    }
+    // Google's own servers being temporarily overloaded (503) or rate
+    // limits (429) are transient — back off and try again rather than
+    // failing the whole run over a momentary blip.
+    await sleep(2 ** attempt * 500 + Math.random() * 300);
+  }
+
+  if (!res || !res.ok) {
+    throw new Error(lastError || "Gemini request failed.");
   }
 
   const data = await res.json();
