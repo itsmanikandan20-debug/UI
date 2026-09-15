@@ -25,6 +25,13 @@ async function createSession(): Promise<BrowserbaseSession> {
 
   if (!res.ok) {
     const body = await res.text().catch(() => "");
+    if (res.status === 401 || res.status === 403) {
+      throw new Error(
+        `Browserbase rejected the request (${res.status}). Double-check BROWSERBASE_API_KEY and ` +
+          `BROWSERBASE_PROJECT_ID in your environment variables — this usually means the key is ` +
+          `wrong/missing, or the two values got swapped. Raw response: ${body.slice(0, 200)}`
+      );
+    }
     throw new Error(`Browserbase session create failed (${res.status}): ${body.slice(0, 400)}`);
   }
 
