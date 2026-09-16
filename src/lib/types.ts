@@ -24,6 +24,11 @@ export interface UIAnalysis {
   sectionType: string;
   description: string;
   layout: LayoutAnalysis;
+  /** Distinctive words/phrases read directly off the image (headings, tab
+   * labels, button text) — empty if the image has no legible/meaningful
+   * text (e.g. a pure wireframe), in which case matching relies entirely
+   * on visual/structural signals. */
+  keyText: string[];
   searchQueries: string[];
 }
 
@@ -41,6 +46,9 @@ export interface SectionCandidate {
   height: number;
   structureScore: number;
   tag: string;
+  /** Trimmed heading/text sample read from this DOM section, if any —
+   * used to match against the reference's keyText. */
+  headingText?: string;
   imageDataUrl?: string;
 }
 

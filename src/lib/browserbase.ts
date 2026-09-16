@@ -53,6 +53,9 @@ interface RawSection {
   headingCount: number;
   columnGroups: number;
   tag: string;
+  /** Trimmed text sample (heading text if present, else the section's own
+   * leading text) — the semantic signal used to match against keyText. */
+  text: string;
 }
 
 interface RawScanResult {
@@ -101,6 +104,9 @@ function findCandidateSections(): RawScanResult {
       .map((c) => Math.round(c.getBoundingClientRect().left / 40))
       .filter((v, i, arr) => arr.indexOf(v) === i);
 
+    const heading = el.querySelector("h1,h2,h3,h4");
+    const textSample = (heading?.textContent || el.textContent || "").trim().slice(0, 200);
+
     out.push({
       top,
       left,
@@ -113,6 +119,7 @@ function findCandidateSections(): RawScanResult {
       headingCount: el.querySelectorAll("h1,h2,h3,h4").length,
       columnGroups: Math.max(1, Math.min(lefts.length, 6)),
       tag: el.tagName.toLowerCase(),
+      text: textSample,
     });
   });
 
@@ -142,6 +149,38 @@ function featureMatchBonus(s: RawSection, target?: TargetLayout): number {
   return bonus;
 }
 
+const STOP_WORDS = new Set([
+  "the", "a", "an", "of", "to", "and", "or", "in", "on", "for", "with", "our", "your", "we", "is", "are",
+]);
+
+function significantWords(phrase: string): string[] {
+  return phrase
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((w) => w.length > 2 && !STOP_WORDS.has(w));
+}
+
+/** Semantic match between this section's heading/text and the reference's
+ * keyText phrases — a strong, direct signal (real sites frequently reuse
+ * near-identical headings for common section types like "Meet the
+ * Founder" or "Case Studies"), so it's weighted heavily enough to win
+ * over pure structural richness when present. */
+function textMatchBonus(s: RawSection, keyText?: string[]): number {
+  if (!keyText || keyText.length === 0 || !s.text) return 0;
+  const sectionWords = new Set(significantWords(s.text));
+  if (sectionWords.size === 0) return 0;
+
+  let bonus = 0;
+  for (const phrase of keyText) {
+    const phraseWords = significantWords(phrase);
+    if (phraseWords.length === 0) continue;
+    const matched = phraseWords.filter((w) => sectionWords.has(w)).length;
+    const ratio = matched / phraseWords.length;
+    if (ratio >= 0.6) bonus += 10 * ratio;
+  }
+  return bonus;
+}
+
 function iou(a: RawSection, b: RawSection): number {
   const x1 = Math.max(a.left, b.left);
   const y1 = Math.max(a.top, b.top);
@@ -153,9 +192,18 @@ function iou(a: RawSection, b: RawSection): number {
   return inter / union;
 }
 
-function pickTopCandidates(raw: RawSection[], max: number, target?: TargetLayout): RawSection[] {
+function combinedScore(s: RawSection, target?: TargetLayout, keyText?: string[]): number {
+  return structureScore(s) + featureMatchBonus(s, target) + textMatchBonus(s, keyText);
+}
+
+function pickTopCandidates(
+  raw: RawSection[],
+  max: number,
+  target?: TargetLayout,
+  keyText?: string[]
+): RawSection[] {
   const sorted = [...raw].sort(
-    (a, b) => structureScore(b) + featureMatchBonus(b, target) - (structureScore(a) + featureMatchBonus(a, target))
+    (a, b) => combinedScore(b, target, keyText) - combinedScore(a, target, keyText)
   );
   const picked: RawSection[] = [];
   for (const c of sorted) {
@@ -180,6 +228,7 @@ export interface InspectedPage {
 export async function inspectPage(
   url: string,
   targetLayout?: TargetLayout,
+  keyText?: string[],
   timeoutMs = 30000
 ): Promise<InspectedPage> {
   const session = await createSession();
@@ -204,7 +253,7 @@ export async function inspectPage(
     const scan = await page
       .evaluate(findCandidateSections)
       .catch(() => ({ sections: [], documentHeight: 0 }) as RawScanResult);
-    const top = pickTopCandidates(scan.sections, 6, targetLayout);
+    const top = pickTopCandidates(scan.sections, 6, targetLayout, keyText);
 
     const candidates: SectionCandidate[] = [];
     for (const c of top) {
@@ -221,6 +270,7 @@ export async function inspectPage(
           height: c.height,
           structureScore: structureScore(c),
           tag: c.tag,
+          headingText: c.text || undefined,
           imageDataUrl: `data:image/jpeg;base64,${buffer.toString("base64")}`,
         });
       } catch {

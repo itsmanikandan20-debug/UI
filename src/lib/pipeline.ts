@@ -72,7 +72,7 @@ export async function runPipeline(
   const settled = await mapWithConcurrency(pages, 3, async (page) => {
     try {
       const site = hostnameOf(page.url);
-      const insp = await inspectPage(page.url, analysis.layout);
+      const insp = await inspectPage(page.url, analysis.layout, analysis.keyText);
       inspected += 1;
       emit({
         type: "progress",
@@ -85,8 +85,9 @@ export async function runPipeline(
         .filter((c) => c.imageDataUrl)
         .map((c) => {
           const decoded = decodeDataUrl(c.imageDataUrl!);
+          const heading = c.headingText ? ` — heading/text: "${c.headingText.slice(0, 80)}"` : "";
           return {
-            label: `${c.tag} section, ~${Math.round(c.width)}x${Math.round(c.height)}px`,
+            label: `${c.tag} section, ~${Math.round(c.width)}x${Math.round(c.height)}px${heading}`,
             imageBase64: decoded.base64,
             mimeType: decoded.mimeType,
           };

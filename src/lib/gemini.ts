@@ -171,9 +171,10 @@ const ANALYSIS_SCHEMA = {
         "visualHierarchy",
       ],
     },
+    keyText: { type: "ARRAY", items: { type: "STRING" } },
     searchQueries: { type: "ARRAY", items: { type: "STRING" } },
   },
-  required: ["sectionType", "description", "layout", "searchQueries"],
+  required: ["sectionType", "description", "layout", "keyText", "searchQueries"],
 };
 
 const ANALYSIS_PROMPT = `You are a senior UI/UX designer analyzing a submitted UI reference. It may be a
@@ -197,9 +198,31 @@ example: "Tabbed feature section with three tabs, heading and description on
 the left, product image on the right, and a CTA button below the
 description."
 
+Next, read any LEGIBLE TEXT actually visible in the image — headings, tab
+labels, button labels, captions, short taglines. This is a semantic signal
+that's often the strongest clue to what kind of section this is (e.g. a
+heading like "Meet the Founder", "Case Studies", or "Testimonials"
+immediately tells you the section type, on top of its layout). List the
+most distinctive 1-5 phrases VERBATIM, shortest meaningful form (e.g. just
+"Meet the Founder", not the whole paragraph under it), in keyText. If the
+image has no legible or meaningful text (a rough wireframe, placeholder
+bars, illegible handwriting), return an empty array for keyText — in that
+case rely entirely on the structural/layout signals above (for example, 4
+tabs at the top with an image on one side and text/button on the other
+should still be recognized as a tabbed feature section from structure
+alone, with no heading needed).
+
 Finally, generate 4 to 6 distinct web-search queries that would help find
 REAL, LIVE product/company/marketing websites that happen to CONTAIN a
 similar UI section — not pages that are ABOUT UI design.
+
+If keyText is non-empty, make 1-2 of the queries use those phrases
+directly — real websites frequently reuse near-identical section headings
+for common patterns (an agency's founder section, a case studies section,
+a testimonials section), so searching the literal phrase alongside a site
+type is a strong, direct signal, e.g. "\"Meet the Founder\" section
+company website", "\"Case Studies\" section b2b website". Use the other
+queries for structural phrasing as before, so both signals get searched.
 
 Critical: never use words like "component", "UI kit", "template",
 "blocks", "design system", "library", "snippet", or a specific framework
@@ -266,15 +289,24 @@ clearly dominant — go through each one explicitly before deciding:
 6. Spacing density and proportions (tight vs airy, roughly similar
    element sizing)
 7. Overall visual hierarchy (what's most prominent, reading order)
+8. Section TYPE/purpose (e.g. testimonial/quote block, founder or team
+   bio spotlight, case-studies list, pricing table, hero, FAQ). If the
+   reference has keyText or a clear sectionType, a candidate that is
+   recognizably the SAME kind of section should score higher, and a
+   candidate that is a clearly different kind of section (e.g. reference
+   is a founder quote block, candidate is a pricing table) should score
+   low even if a couple of individual elements superficially resemble
+   each other.
 
 STRICT RULES:
 - Colors, fonts, logos, exact copy/wording, and branding must have
   essentially NO influence on the score.
-- The webpage's general TOPIC, industry, or writing style/tone must have
-  ZERO influence — a candidate about a totally different subject can still
-  be a perfect structural match, and a candidate about a similar subject
-  with different structure is NOT a good match. Judge the arrangement of
-  boxes/tabs/columns/images on screen, not what the content is about.
+- The webpage's general TOPIC or INDUSTRY (what the company sells,
+  writing tone) must have ZERO influence — a candidate about a totally
+  different industry can still be a perfect match. This is different
+  from section TYPE (rule 8 above), which DOES matter: judge what KIND
+  of section it is and how its elements are arranged, never what the
+  business or its content is about.
 - Prefer a cropped section candidate over the full-page fallback whenever
   ANY cropped candidate shares real structural similarity, even if
   imperfect. Only choose the full-page fallback when literally none of the
