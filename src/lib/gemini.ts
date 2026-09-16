@@ -204,10 +204,19 @@ that's often the strongest clue to what kind of section this is (e.g. a
 heading like "Meet the Founder", "Case Studies", or "Testimonials"
 immediately tells you the section type, on top of its layout). List the
 most distinctive 1-5 phrases VERBATIM, shortest meaningful form (e.g. just
-"Meet the Founder", not the whole paragraph under it), in keyText. If the
-image has no legible or meaningful text (a rough wireframe, placeholder
-bars, illegible handwriting), return an empty array for keyText — in that
-case rely entirely on the structural/layout signals above (for example, 4
+"Meet the Founder", not the whole paragraph under it), in keyText — but
+ONLY include GENERIC, recurring UI/section labels that other real
+websites would plausibly reuse verbatim or near-verbatim (section
+headings like "Featured", "Explore all products", "Case Studies",
+generic nav/action labels). NEVER include brand names, product names, or
+company-specific taglines (e.g. skip "Zia Agent Studio", "Introducing
+[Product Name]", a company's own slogan, or a list of that company's
+specific product names) — those are unique to one company and searching
+for them verbatim will only ever find that one company's own page, not
+comparable pages from other real websites. If the image has no legible
+or meaningful GENERIC text (a rough wireframe, placeholder bars, or only
+brand-specific text), return an empty array for keyText — in that case
+rely entirely on the structural/layout signals above (for example, 4
 tabs at the top with an image on one side and text/button on the other
 should still be recognized as a tabbed feature section from structure
 alone, with no heading needed).
@@ -242,6 +251,11 @@ tabs/cards/buttons vocabulary if the reference doesn't have those:
   large image"
 - Simple hero/CTA sections: "startup landing page hero heading
   subheading centered button"
+- Promo panel + grid of feature/product tiles (one callout box next to a
+  multi-item icon+title+description grid): "software company all
+  products page grid of app icons", "saas platform explore all products
+  overview grid", "company product suite page icon grid with
+  descriptions", "app dashboard featured tools grid with promo banner"
 Mix in different industries/company types (saas, ecommerce, fintech,
 healthcare, consumer app, agency, marketplace) across the queries so
 results aren't all from the same niche. Still describe structure
